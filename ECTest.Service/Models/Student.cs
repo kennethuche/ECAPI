@@ -14,5 +14,6 @@ namespace ECTest.Service.Models
         public string FullName { get; set; }
         public string Email { get; set; }
         public virtual ICollection<Course> Courses { get; set; }
+        public virtual ICollection<Holiday> Holidays { get; set; }
     }
 }

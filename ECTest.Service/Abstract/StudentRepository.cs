@@ -21,8 +21,14 @@ namespace ECTest.Service.Abstract
         public async Task<Student> CreateStudentAsync(Student student)
         {
             // Validate courses
-            if(student.Courses.Any())
-            await ValidateCoursesAsync(student.Id, student.Courses);
+            if (student.Courses.Any())
+            {
+                foreach (var course in student.Courses)
+                    course.NumberOfTutionWeek = CalculateTuitionWeeksForCourse(course);
+
+                await ValidateCoursesAsync(student.Id, student.Courses);
+            }
+           
 
 
             _dbContext.Students.Add(student);
@@ -52,6 +58,7 @@ namespace ECTest.Service.Abstract
         {
             var student = await _dbContext.Students
                 .Include(s => s.Courses)
+                .Include(s => s.Holidays)
                 .FirstOrDefaultAsync(s => s.Id == studentId);
 
             if (student == null)
@@ -63,7 +70,10 @@ namespace ECTest.Service.Abstract
         }
         public IQueryable<Student> GetStudents()
         {
-            return _dbContext.Students.Include(s => s.Courses).AsQueryable();
+            return _dbContext.Students
+                .Include(s => s.Holidays)
+                .Include(s => s.Courses)
+                .AsQueryable();
         }
 
    
@@ -119,6 +129,7 @@ namespace ECTest.Service.Abstract
 
 
         }
+
         public async Task BookHolidayAsync(Guid studentId, DateTimeOffset holidayStart, DateTimeOffset holidayEnd)
         {
             if (holidayStart.DayOfWeek != DayOfWeek.Monday || holidayEnd.DayOfWeek != DayOfWeek.Friday)
@@ -128,40 +139,86 @@ namespace ECTest.Service.Abstract
 
             var student = await GetStudentByIdAsync(studentId);
             if (student == null)
+            {
                 throw new CustomValidationException("Student does not exist");
-            
+            }
 
             var daysToExtend = (holidayEnd - holidayStart).Days + 1;
-            var holidayCourses = new List<Holiday>();
+        
+            var adjustedCourses = new List<Course>();
 
-            foreach (var course in student.Courses.OrderBy(c => c.StartDate))
+            var coursesToAdjust = student.Courses.OrderBy(c => c.StartDate).ToList();
+            var endOfHolidayAdjustedCourse = holidayEnd;
+            DateTimeOffset minAdjustedStartDate = DateTimeOffset.MaxValue;
+            DateTimeOffset maxAdjustedEndDate = DateTimeOffset.MinValue;
+            foreach (var course in coursesToAdjust)
             {
-             
                 if (course.EndDate >= holidayStart && course.StartDate <= holidayEnd)
                 {
                     // Course intersects with holiday period, so adjust end date
-                  
+                    course.StartDate = AdjustDateToStartOfWeek(endOfHolidayAdjustedCourse.AddDays(3));
                     course.EndDate = AdjustDateToEndOfWeek(course.EndDate.AddDays(daysToExtend));
+                    endOfHolidayAdjustedCourse = course.EndDate;
 
-                    holidayCourses.Add(new Holiday
+                    minAdjustedStartDate = course.StartDate < minAdjustedStartDate ? course.StartDate : minAdjustedStartDate;
+                    maxAdjustedEndDate = course.EndDate > maxAdjustedEndDate ? course.EndDate : maxAdjustedEndDate;
+
+
+
+                    // Validate if course starts on Monday and ends on Friday after adjustment
+                    if (course.StartDate.DayOfWeek != DayOfWeek.Monday || course.EndDate.DayOfWeek != DayOfWeek.Friday)
                     {
-                        StartDate = holidayStart,
-                        EndDate = holidayEnd,
-                        CourseId = course.Id
-                    });
-                }
+                        throw new CustomValidationException("Adjusted courses must start on a Monday and end on a Friday.");
+                    }
 
-                // Validate if course starts on Monday and ends on Friday after adjustment
-                if ((course.StartDate.DayOfWeek != DayOfWeek.Monday || course.EndDate.DayOfWeek != DayOfWeek.Friday))
-                    throw new CustomValidationException("Adjusted courses must start on a Monday and end on a Friday.");
-                
+                    adjustedCourses.Add(course);
+
+
+                }
+                else if(course.StartDate < holidayStart && course.EndDate < holidayEnd) // courses not affected by the Holiday
+                {
+                    adjustedCourses.Add(course);
+                }
             }
 
+            if(adjustedCourses.Any())
+            coursesToAdjust = coursesToAdjust.Except(adjustedCourses).ToList();
+            // Adjust subsequent courses to avoid overlap
+            AdjustSubsequentCourses(coursesToAdjust, endOfHolidayAdjustedCourse);
+
             // Add holiday records to the database
-            if(holidayCourses.Any())
-            _dbContext.Holidays.AddRange(holidayCourses);
+           var holiday =
+                  new Holiday
+                  {
+                      StartDate = holidayStart,
+                      EndDate = holidayEnd,
+                     StudentId = studentId,
+                  };
+
+            _dbContext.Holidays.Add(holiday);
+            
 
             await _dbContext.SaveChangesAsync();
+        }
+
+
+        private void AdjustSubsequentCourses(List<Course> courses, DateTimeOffset startAfter)
+        {
+            for (int i = 0; i < courses.Count; i++)
+            {
+                var course = courses[i];
+                if (course.StartDate < startAfter)
+                {
+                    var duration = (course.EndDate - course.StartDate).Days;
+                    var newStartDate = AdjustDateToStartOfWeek(startAfter.AddDays(3)); // Move to the next Monday
+                    var newEndDate = AdjustDateToEndOfWeek(newStartDate.AddDays(duration));
+
+                    course.StartDate = newStartDate;
+                    course.EndDate = newEndDate;
+
+                    startAfter = newEndDate;
+                }
+            }
         }
 
         private DateTimeOffset AdjustDateToStartOfWeek(DateTimeOffset date)
@@ -182,6 +239,37 @@ namespace ECTest.Service.Abstract
             return date;
         }
 
+        private int CalculateTuitionWeeksForCourse(Course course)
+        {
+            DateTimeOffset currentStart = course.StartDate;
+            DateTimeOffset courseEnd = course.EndDate;
+            int tuitionWeeks = 0;
+
+            while (currentStart <= courseEnd)
+            {
+                // Check if the current week is a full tuition week (Monday to Friday)
+                if (currentStart.DayOfWeek == DayOfWeek.Monday)
+                {
+                    DateTimeOffset weekEnd = currentStart.AddDays(4); // End of the current week (Friday)
+                    if (weekEnd <= courseEnd && weekEnd.DayOfWeek == DayOfWeek.Friday)
+                    {
+                        tuitionWeeks++;
+                        currentStart = currentStart.AddDays(7); // Move to the next Monday
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+                else
+                {
+                    // Move to the next Monday
+                    currentStart = currentStart.AddDays((DayOfWeek.Monday - currentStart.DayOfWeek + 7) % 7);
+                }
+            }
+
+            return tuitionWeeks;
+        }
 
         private async Task ValidateCoursesAsync(Guid studentId, IEnumerable<Course> courses)
         {

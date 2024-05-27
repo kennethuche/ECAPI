@@ -16,6 +16,7 @@ namespace ECTest.Service.Models
         public DateTimeOffset StartDate { get; set; }
         public DateTimeOffset EndDate { get; set; }
 
+        public int NumberOfTutionWeek { get; set; }
         [ForeignKey("Student")]
         public Guid StudentId { get; set; }
         public  virtual Student Student { get; set; }

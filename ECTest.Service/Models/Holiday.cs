@@ -14,8 +14,8 @@ namespace ECTest.Service.Models
         public Guid Id { get; set; } = Guid.NewGuid();
         public DateTimeOffset StartDate { get; set; }
         public DateTimeOffset EndDate { get; set; }
-        [ForeignKey("Course")]
-        public Guid? CourseId { get; set; }
-        public virtual Course? Course { get; set; }
+        [ForeignKey("Student")]
+        public Guid StudentId { get; set; }
+        public virtual Student Student { get; set; }
     }
 }
