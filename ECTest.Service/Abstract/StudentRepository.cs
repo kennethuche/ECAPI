@@ -156,7 +156,7 @@ namespace ECTest.Service.Abstract
                 if (course.EndDate >= holidayStart && course.StartDate <= holidayEnd)
                 {
                     // Course intersects with holiday period, so adjust end date
-                    course.StartDate = AdjustDateToStartOfWeek(endOfHolidayAdjustedCourse.AddDays(3));
+                    course.StartDate = course.StartDate = course.StartDate < holidayStart ? course.StartDate : AdjustDateToStartOfWeek(endOfHolidayAdjustedCourse.AddDays(3));
                     course.EndDate = AdjustDateToEndOfWeek(course.EndDate.AddDays(daysToExtend));
                     endOfHolidayAdjustedCourse = course.EndDate;
 
